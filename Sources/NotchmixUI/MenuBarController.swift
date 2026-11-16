@@ -57,6 +57,12 @@ public final class MenuBarController: NSObject, NSPopoverDelegate {
         }
     }
 
+    public func showPanelIfNeeded() {
+        if !popover.isShown {
+            showPanel()
+        }
+    }
+
     private func showPanel() {
         guard let button = statusItem.button else { return }
         // A transient popover only notices clicks elsewhere, and only tracks

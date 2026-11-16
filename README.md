@@ -21,7 +21,11 @@ That is the whole feature list. There is no equaliser, no routing and no setting
 - Apple Silicon
 - To build: Xcode 26 or later (Swift 6)
 
-## Build and install
+## Install
+
+Download `Notchmix-1.0.0.zip` from [Releases](https://github.com/GirlFromTheBay/Notchmix/releases), unzip it, and move `Notchmix.app` to `/Applications/`.
+
+### Build from source
 
 ```bash
 git clone https://github.com/GirlFromTheBay/Notchmix.git
@@ -38,7 +42,11 @@ There is no login item. To start Notchmix at login, add it under System Settings
 
 `build.sh` signs with a Developer ID or Apple Development identity if your keychain has one, and ad-hoc otherwise. With an ad-hoc signature macOS ties the permissions below to that exact build, so they survive relaunches but are asked for again after you rebuild.
 
-A copy of the app that was downloaded rather than built locally is neither notarised nor signed with a Developer ID, so Gatekeeper will refuse to open it at first. Allow it under System Settings → Privacy & Security → Open Anyway.
+A copy of the app that was downloaded rather than built locally is neither notarised nor signed with a Developer ID, so Gatekeeper will refuse to open it at first. Allow it under System Settings → Privacy & Security → Open Anyway, or clear the quarantine attribute in Terminal:
+
+```bash
+xattr -cr /Applications/Notchmix.app
+```
 
 ## Permissions
 
