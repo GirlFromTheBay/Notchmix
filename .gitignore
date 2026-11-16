@@ -1,0 +1,22 @@
+# Reference clones and every build product stay local to this folder.
+/refs/
+/.build/
+/DerivedData/
+/dist/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+
+# Credentials and signing material must never be committed.
+.env
+.env.*
+*.pem
+*.p12
+*.cer
+*.key
+*.mobileprovision
+*.provisionprofile
+
+# Local notes that are not part of the project.
+/gemini_github_guide.md
+/github_report.md

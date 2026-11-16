@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Process taps are gated by the System Audio Recording privacy setting,
+        not by an entitlement, and the app is not sandboxed (taps do not work
+        in the sandbox).
+
+        This one entitlement is needed under the hardened runtime because a
+        tap is read through an aggregate device: when the output device also
+        has an input (a USB or Bluetooth headset), the aggregate carries that
+        input stream too. Notchmix tells Core Audio it does not use it.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <!--
+        Lets the app send Apple Events under the hardened runtime: reading
+        tab URLs from Safari and sending transport commands to Spotify. macOS
+        still asks the user per app before the first event is delivered.
+    -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

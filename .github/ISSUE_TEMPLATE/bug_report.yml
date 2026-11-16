@@ -1,0 +1,54 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "27.2"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Notchmix version or commit
+      placeholder: "1.0.0, or a commit hash if you built it yourself"
+    validations:
+      required: true
+  - type: dropdown
+    id: output
+    attributes:
+      label: Output device
+      options:
+        - Built-in speakers
+        - Wired headphones
+        - USB device or audio interface
+        - Bluetooth (AirPods or other)
+        - HDMI or DisplayPort
+        - AirPlay
+        - Aggregate or multi-output device
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: Which app's audio was affected
+      placeholder: "Safari, Spotify, a game..."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: |
+        Reproduce the problem, then run this in Terminal and paste the result.
+        Check it for anything you do not want to share first.
+        `log show --last 5m --predicate 'process == "Notchmix"' --style compact`
+      render: text

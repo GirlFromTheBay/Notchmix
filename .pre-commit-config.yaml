@@ -1,0 +1,7 @@
+# Optional local guard: `pip install pre-commit && pre-commit install`.
+# The same scan runs in CI for every push and pull request.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

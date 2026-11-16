@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleDisplayName</key>
+    <string>Notchmix</string>
+    <key>CFBundleExecutable</key>
+    <string>Notchmix</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleIdentifier</key>
+    <string>app.notchmix.Notchmix</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Notchmix</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>LSMultipleInstancesProhibited</key>
+    <true/>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Notchmix asks Safari which sites are playing audio, to label its volume slider, and sends play, pause and skip to Spotify when you use those buttons.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Notchmix reads an app's audio only to play it back at the volume you set. Nothing is recorded, stored or sent anywhere.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Notchmix does not use the microphone. macOS can ask when the output device, such as a headset, also has an input.</string>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+</dict>
+</plist>

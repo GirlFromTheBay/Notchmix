@@ -1,0 +1,9 @@
+# Everything is reviewed by the maintainer. The paths listed separately are
+# the ones that decide what gets built, signed and run in CI.
+*                                     @GirlFromTheBay
+/.github/                             @GirlFromTheBay
+/build.sh                             @GirlFromTheBay
+/Scripts/                             @GirlFromTheBay
+/Resources/Notchmix.entitlements  @GirlFromTheBay
+/Resources/Info.plist                 @GirlFromTheBay
+/Package.swift                        @GirlFromTheBay
