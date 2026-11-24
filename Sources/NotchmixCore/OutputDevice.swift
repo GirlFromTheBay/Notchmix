@@ -16,20 +16,45 @@ struct OutputDevice: Equatable {
         return OutputDevice(id: id, uid: uid, name: name)
     }
 
+    static func isHardwareOutputTransport(_ transport: UInt32) -> Bool {
+        switch transport {
+        case kAudioDeviceTransportTypeBuiltIn,
+             kAudioDeviceTransportTypeBluetooth,
+             kAudioDeviceTransportTypeBluetoothLE,
+             kAudioDeviceTransportTypeUSB,
+             kAudioDeviceTransportTypeHDMI,
+             kAudioDeviceTransportTypeDisplayPort,
+             kAudioDeviceTransportTypeThunderbolt,
+             kAudioDeviceTransportTypePCI,
+             kAudioDeviceTransportTypeFireWire,
+             kAudioDeviceTransportTypeAVB,
+             kAudioDeviceTransportTypeAirPlay:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func allOutputDevices() -> [OutputDevice] {
         let ids = AudioObjectID.system.readArray(kAudioHardwarePropertyDevices, of: AudioObjectID.self)
-        return ids.compactMap { id in
+        var devices = ids.compactMap { id -> OutputDevice? in
             guard id != .unknown,
                   let uid = id.readString(kAudioDevicePropertyDeviceUID),
                   !uid.hasPrefix("Notchmix-"),
+                  (id.read(kAudioDevicePropertyDeviceIsAlive, as: UInt32.self) ?? 1) != 0,
                   (id.read(kAudioDevicePropertyIsHidden, as: UInt32.self) ?? 0) == 0,
+                  let transport: UInt32 = id.read(kAudioDevicePropertyTransportType),
+                  isHardwareOutputTransport(transport),
                   id.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0 else {
                 return nil
             }
             let name = id.readString(kAudioObjectPropertyName) ?? "Output"
             return OutputDevice(id: id, uid: uid, name: name)
         }
-        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        if let current = current(), !devices.contains(where: { $0.uid == current.uid }) {
+            devices.append(current)
+        }
+        return devices.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
     @discardableResult

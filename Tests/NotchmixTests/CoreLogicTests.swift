@@ -1,3 +1,4 @@
+import CoreAudio
 import CoreServices
 import XCTest
 @testable import NotchmixCore
@@ -505,5 +506,23 @@ final class EnhancedMixerFeaturesTests: XCTestCase {
         XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("company.thebrowser.Browser"))
         XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("com.microsoft.edgemac"))
         XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("com.operasoftware.OperaGX"))
+    }
+
+    func testHardwareOutputTransportFilterExcludesVirtualAndAggregateDevices() {
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeBuiltIn))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeBluetooth))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeBluetoothLE))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeUSB))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeHDMI))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeDisplayPort))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeThunderbolt))
+        XCTAssertTrue(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeAirPlay))
+
+        XCTAssertFalse(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeVirtual))
+        XCTAssertFalse(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeAggregate))
+        XCTAssertFalse(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeAutoAggregate))
+        XCTAssertFalse(OutputDevice.isHardwareOutputTransport(0))
+        XCTAssertFalse(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeContinuityCaptureWired))
+        XCTAssertFalse(OutputDevice.isHardwareOutputTransport(kAudioDeviceTransportTypeContinuityCaptureWireless))
     }
 }
