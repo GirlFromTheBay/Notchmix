@@ -26,7 +26,7 @@ That is the whole feature list. There is no equaliser and no settings window.
 
 ## Install
 
-Download `Notchmix-1.0.0.zip` from [Releases](https://github.com/GirlFromTheBay/Notchmix/releases), unzip it, and move `Notchmix.app` to `/Applications/`.
+Download `Notchmix-1.0.3.zip` from [Releases](https://github.com/GirlFromTheBay/Notchmix/releases), unzip it, and move `Notchmix.app` to `/Applications/`.
 
 ### Build from source
 
