@@ -27,9 +27,11 @@ public final class AudioEngine: @unchecked Sendable {
 
     // Everything below is confined to `queue`.
     private var settings: [String: AppSetting]
+    private var latestProcesses: [AudioProcess] = []
     private var groups: [AudioAppGroup] = []
     private var sessions: [String: TapSession] = [:]
     private var output: OutputDevice?
+    private var savedAlertVolume: Float?
 
     private var lastPlaying: [String: Date] = [:]
     private var lastNonDefault: [String: Date] = [:]
@@ -75,6 +77,7 @@ public final class AudioEngine: @unchecked Sendable {
     public func start() {
         queue.async { [self] in
             installSystemListeners()
+            applySystemSoundsAlertVolume()
             outputDidChange()
             startTimer()
         }
@@ -95,6 +98,10 @@ public final class AudioEngine: @unchecked Sendable {
             timer?.cancel()
             timer = nil
             stopAllSessions()
+            if let savedAlertVolume {
+                SystemSounds.writeRawAlertVolume(savedAlertVolume)
+                self.savedAlertVolume = nil
+            }
             processListeners.removeAll()
             deviceListeners.removeAll()
             systemListeners.removeAll()
@@ -104,6 +111,9 @@ public final class AudioEngine: @unchecked Sendable {
     public func setSetting(_ setting: AppSetting, for id: String) {
         queue.async { [self] in
             settings[id] = setting
+            if id == SystemSounds.id {
+                applySystemSoundsAlertVolume()
+            }
             // A direct adjustment is the user asking again; drop any backoff.
             retryAfter[id] = nil
             failureCount[id] = nil
@@ -112,8 +122,13 @@ public final class AudioEngine: @unchecked Sendable {
                 lastNonDefault[id] = Date()
                 // Fast path for slider drags: only the gain moved.
                 if let session = sessions[id], !needsRestart.contains(id) {
-                    session.gain = setting.gain
-                    return
+                    if id != SystemSounds.id || session.processObjects == catalog.systemSoundObjects(
+                        from: latestProcesses,
+                        includeAlertDaemon: setting.isMuted || setting.volume <= 0
+                    ) {
+                        session.gain = setting.gain
+                        return
+                    }
                 }
             } else if let session = sessions[id] {
                 session.gain = 1
@@ -124,6 +139,21 @@ public final class AudioEngine: @unchecked Sendable {
             }
             reconcile()
             publish()
+        }
+    }
+
+    private func applySystemSoundsAlertVolume() {
+        let setting = settings[SystemSounds.id] ?? .default
+        if !setting.isDefault {
+            if savedAlertVolume == nil {
+                let current = SystemSounds.readRawAlertVolume() ?? 1
+                savedAlertVolume = current > 0 ? current : 1
+            }
+            let target: Float = setting.isMuted ? 0 : SystemSounds.rawAlertVolume(forPosition: setting.volume)
+            SystemSounds.writeRawAlertVolume(target)
+        } else if savedAlertVolume != nil {
+            SystemSounds.writeRawAlertVolume(1)
+            savedAlertVolume = nil
         }
     }
 
@@ -269,6 +299,7 @@ public final class AudioEngine: @unchecked Sendable {
 
     private func refresh() {
         let processes = catalog.processes()
+        latestProcesses = processes
         updateProcessListeners(for: processes)
         groups = catalog.groups(from: processes)
         reconcile()
@@ -317,7 +348,24 @@ public final class AudioEngine: @unchecked Sendable {
     /// running app whose setting is not the default, none for anything else.
     private func reconcile() {
         let now = Date()
-        let wanted = groups.filter { !(settings[$0.identity.id] ?? .default).isDefault }
+        var effectiveGroups = groups
+        let sysSetting = settings[SystemSounds.id] ?? .default
+        if !sysSetting.isDefault {
+            let sysObjects = catalog.systemSoundObjects(
+                from: latestProcesses,
+                includeAlertDaemon: sysSetting.isMuted || sysSetting.volume <= 0
+            )
+            if !sysObjects.isEmpty {
+                let sysPlaying = latestProcesses.contains { sysObjects.contains($0.objectID) && $0.isRunningOutput }
+                effectiveGroups.append(AudioAppGroup(
+                    identity: SystemSounds.identity,
+                    processObjects: sysObjects,
+                    isPlaying: sysPlaying
+                ))
+            }
+        }
+
+        let wanted = effectiveGroups.filter { !(settings[$0.identity.id] ?? .default).isDefault }
         let mayTap = wanted.isEmpty ? false : checkPermission()
         if !sessions.isEmpty, output == nil || (!mayTap && isPermissionBlocked) {
             // Nothing to play through, or no right to tap: let apps play
@@ -326,7 +374,7 @@ public final class AudioEngine: @unchecked Sendable {
         }
 
         var liveIDs: Set<String> = []
-        for group in groups {
+        for group in effectiveGroups {
             let id = group.identity.id
             liveIDs.insert(id)
             let setting = settings[id] ?? .default
@@ -345,8 +393,12 @@ public final class AudioEngine: @unchecked Sendable {
             lastNonDefault[id] = now
             guard mayTap, let output else { continue }
 
+            let objectsMatch = id == SystemSounds.id
+                ? sessions[id]?.processObjects == group.processObjects
+                : sessions[id]?.covers(group.processObjects) == true
+
             if let session = sessions[id],
-               session.covers(group.processObjects),
+               objectsMatch,
                session.outputUID == output.uid,
                !needsRestart.contains(id) {
                 session.gain = setting.gain
@@ -421,8 +473,14 @@ public final class AudioEngine: @unchecked Sendable {
         for (id, session) in sessions {
             let age = now.timeIntervalSince(session.createdAt)
             let callbacks = session.callbackCount
+            let isPlaying: Bool = if id == SystemSounds.id {
+                latestProcesses.contains { session.processObjects.contains($0.objectID) && $0.isRunningOutput }
+            } else {
+                groups.first(where: { $0.identity.id == id })?.isPlaying == true
+            }
+
             if age > 2 {
-                if heartbeat[id] == callbacks {
+                if heartbeat[id] == callbacks, callbacks > 0 || isPlaying {
                     // Not rendering, so the app is muted with nothing playing
                     // in its place. Release it now and rebuild after a pause.
                     log.notice("Session \(id, privacy: .public) stalled; releasing")
@@ -436,7 +494,7 @@ public final class AudioEngine: @unchecked Sendable {
 
             if session.audibleFrames > 0 {
                 hasHeardAudio = true
-            } else if age > 3, groups.first(where: { $0.identity.id == id })?.isPlaying == true {
+            } else if age > 3, isPlaying {
                 silentWhilePlaying = true
             }
         }
@@ -502,7 +560,8 @@ public final class AudioEngine: @unchecked Sendable {
             if group.isPlaying { lastPlaying[id] = now }
             let recentlyPlayed = lastPlaying[id].map { now.timeIntervalSince($0) < Self.lingerSeconds } ?? false
             let pinned = isPanelVisible && shownIDs.contains(id)
-            guard group.isPlaying || recentlyPlayed || pinned else { continue }
+            let hasCustomSetting = !(settings[id] ?? .default).isDefault
+            guard group.isPlaying || recentlyPlayed || pinned || hasCustomSetting else { continue }
             apps.append(MixerApp(
                 id: id,
                 name: group.identity.name,

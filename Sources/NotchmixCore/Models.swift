@@ -49,6 +49,15 @@ public struct MixerApp: Identifiable, Equatable, Sendable {
         self.isPlaying = isPlaying
         self.detail = detail
     }
+
+    /// The permanent mixer row for macOS notification and alert sounds.
+    public static let systemSounds = MixerApp(
+        id: SystemSounds.id,
+        name: SystemSounds.name,
+        bundlePath: nil,
+        isPlaying: false,
+        detail: SystemSounds.detail
+    )
 }
 
 /// The default output device's master volume.

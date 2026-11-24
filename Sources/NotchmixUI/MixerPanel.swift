@@ -72,12 +72,20 @@ public struct MixerPanel: View {
     @ViewBuilder
     private var appsSection: some View {
         if model.apps.isEmpty {
-            Text("No apps are playing audio")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, Metrics.horizontalPadding)
-                .padding(.vertical, 10)
-        } else if model.apps.count > Self.maxVisibleApps {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(spacing: 0) {
+                    AppRow(app: .systemSounds, model: model)
+                }
+                .padding(.top, 4)
+
+                Text("No apps are playing audio")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, Metrics.horizontalPadding)
+                    .padding(.top, 4)
+                    .padding(.bottom, 10)
+            }
+        } else if model.apps.count + 1 > Self.maxVisibleApps {
             ScrollView {
                 appRows
             }
@@ -89,6 +97,7 @@ public struct MixerPanel: View {
 
     private var appRows: some View {
         VStack(spacing: 0) {
+            AppRow(app: .systemSounds, model: model)
             ForEach(model.apps) { app in
                 AppRow(app: app, model: model)
             }

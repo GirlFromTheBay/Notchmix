@@ -8,6 +8,7 @@ A menu bar volume mixer for macOS. Every app that is playing audio gets its own 
 
 ## What it does
 
+- A permanent **System Sounds** slider and mute toggle to silence or lower macOS notification and alert sounds while still receiving visual notifications.
 - One slider and one mute toggle per app that is playing audio. Click an app's icon or the speaker glyph to mute it; drag or scroll over a slider to change its level.
 - A master slider for the current output device.
 - For Safari, the row names the sites that are playing, for example "Safari  youtube, roll20".

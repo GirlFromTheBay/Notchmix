@@ -6,7 +6,15 @@ import Foundation
 public struct AudioProcess: Equatable, Sendable {
     public let objectID: AudioObjectID
     public let pid: pid_t
+    public let bundleID: String?
     public let isRunningOutput: Bool
+
+    public init(objectID: AudioObjectID, pid: pid_t, bundleID: String? = nil, isRunningOutput: Bool) {
+        self.objectID = objectID
+        self.pid = pid
+        self.bundleID = bundleID
+        self.isRunningOutput = isRunningOutput
+    }
 }
 
 /// Every audio process that belongs to one app.
@@ -34,8 +42,9 @@ public final class AudioProcessCatalog {
             .compactMap { objectID in
                 guard let pid: pid_t = objectID.read(kAudioProcessPropertyPID),
                       pid > 0, pid != ownPID else { return nil }
+                let bundleID = objectID.readString(kAudioProcessPropertyBundleID)
                 let running: UInt32 = objectID.read(kAudioProcessPropertyIsRunningOutput) ?? 0
-                return AudioProcess(objectID: objectID, pid: pid, isRunningOutput: running != 0)
+                return AudioProcess(objectID: objectID, pid: pid, bundleID: bundleID, isRunningOutput: running != 0)
             }
     }
 
@@ -48,6 +57,10 @@ public final class AudioProcessCatalog {
         var playing: Set<String> = []
 
         for process in processes {
+            let execPath = ProcessInspector.executablePath(of: process.pid)
+            if SystemSounds.isSystemSoundProcess(bundleID: process.bundleID, executablePath: execPath) {
+                continue
+            }
             guard let identity = resolver.resolve(pid: process.pid) else { continue }
             if identities[identity.id] == nil {
                 identities[identity.id] = identity
@@ -66,6 +79,15 @@ public final class AudioProcessCatalog {
                 isPlaying: playing.contains(id)
             )
         }
+    }
+
+    public func systemSoundObjects(from processes: [AudioProcess], includeAlertDaemon: Bool) -> [AudioObjectID] {
+        processes.compactMap { process in
+            let execPath = ProcessInspector.executablePath(of: process.pid)
+            let isNotification = SystemSounds.isNotificationProcess(bundleID: process.bundleID, executablePath: execPath)
+            let isAlert = includeAlertDaemon && SystemSounds.isAlertDaemon(bundleID: process.bundleID, executablePath: execPath)
+            return (isNotification || isAlert) ? process.objectID : nil
+        }.sorted()
     }
 
     public func scan() -> [AudioAppGroup] {

@@ -234,11 +234,62 @@ public final class MixerModel {
     // MARK: Icons
 
     func icon(for app: MixerApp) -> NSImage {
+        if app.id == SystemSounds.id {
+            if let cached = icons[SystemSounds.id] { return cached }
+            let image = Self.makeSystemSoundsIcon()
+            icons[SystemSounds.id] = image
+            return image
+        }
         let key = app.bundlePath ?? ""
         if let cached = icons[key] { return cached }
         let image = app.bundlePath.map { NSWorkspace.shared.icon(forFile: $0) }
             ?? NSWorkspace.shared.icon(for: .unixExecutable)
         icons[key] = image
+        return image
+    }
+
+    private static func makeSystemSoundsIcon() -> NSImage {
+        let size = NSSize(width: 28, height: 28)
+        let image = NSImage(size: size, flipped: false) { rect in
+            let body = rect.insetBy(dx: 2.5, dy: 2.5)
+            let path = NSBezierPath(roundedRect: body, xRadius: 5.2, yRadius: 5.2)
+
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow()
+            shadow.shadowOffset = NSSize(width: 0, height: -0.5)
+            shadow.shadowBlurRadius = 1.5
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.25)
+            shadow.set()
+            NSColor.black.setFill()
+            path.fill()
+            NSGraphicsContext.restoreGraphicsState()
+
+            NSGraphicsContext.saveGraphicsState()
+            path.addClip()
+            let gradient = NSGradient(colors: [
+                NSColor(calibratedRed: 0.98, green: 0.34, blue: 0.32, alpha: 1),
+                NSColor(calibratedRed: 0.82, green: 0.14, blue: 0.20, alpha: 1),
+            ])
+            gradient?.draw(in: body, angle: -90)
+            NSGraphicsContext.restoreGraphicsState()
+
+            if let symbol = NSImage(systemSymbolName: "bell.fill", accessibilityDescription: SystemSounds.name) {
+                let config = NSImage.SymbolConfiguration(pointSize: 12.5, weight: .semibold)
+                    .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+                if let configured = symbol.withSymbolConfiguration(config) {
+                    let symSize = configured.size
+                    let symRect = NSRect(
+                        x: rect.midX - symSize.width / 2,
+                        y: rect.midY - symSize.height / 2,
+                        width: symSize.width,
+                        height: symSize.height
+                    )
+                    configured.draw(in: symRect)
+                }
+            }
+            return true
+        }
+        image.isTemplate = false
         return image
     }
 

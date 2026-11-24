@@ -359,3 +359,78 @@ final class SpotifyRemoteTests: XCTestCase {
         XCTAssertNil(SpotifyRemote.isPlaying(in: note(nil)))
     }
 }
+
+final class SystemSoundsTests: XCTestCase {
+    func testClassifiesSystemSoundProcessesByBundleIDAndPath() {
+        XCTAssertTrue(SystemSounds.isAlertDaemon(bundleID: "com.apple.systemsoundserverd", executablePath: nil))
+        XCTAssertTrue(SystemSounds.isAlertDaemon(bundleID: nil, executablePath: "/usr/sbin/systemsoundserverd"))
+        XCTAssertFalse(SystemSounds.isNotificationProcess(bundleID: "com.apple.systemsoundserverd", executablePath: nil))
+
+        XCTAssertTrue(SystemSounds.isNotificationProcess(bundleID: "com.apple.notificationcenterui", executablePath: nil))
+        XCTAssertTrue(SystemSounds.isNotificationProcess(bundleID: "com.apple.UserNotificationCenter", executablePath: nil))
+        XCTAssertTrue(SystemSounds.isNotificationProcess(bundleID: "com.apple.usernoted", executablePath: nil))
+        XCTAssertTrue(SystemSounds.isNotificationProcess(
+            bundleID: nil,
+            executablePath: "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter"
+        ))
+        XCTAssertTrue(SystemSounds.isNotificationProcess(bundleID: nil, executablePath: "/usr/sbin/usernoted"))
+
+        XCTAssertTrue(SystemSounds.isSystemSoundProcess(bundleID: "com.apple.systemsoundserverd", executablePath: nil))
+        XCTAssertTrue(SystemSounds.isSystemSoundProcess(bundleID: "com.apple.notificationcenterui", executablePath: nil))
+
+        XCTAssertFalse(SystemSounds.isSystemSoundProcess(bundleID: "com.spotify.client", executablePath: "/Applications/Spotify.app/Contents/MacOS/Spotify"))
+        XCTAssertFalse(SystemSounds.isSystemSoundProcess(bundleID: "com.apple.Safari", executablePath: "/Applications/Safari.app/Contents/MacOS/Safari"))
+        XCTAssertFalse(SystemSounds.isSystemSoundProcess(bundleID: "com.apple.controlcenter", executablePath: "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter"))
+        XCTAssertFalse(SystemSounds.isSystemSoundProcess(bundleID: nil, executablePath: "/usr/libexec/audiomxd"))
+    }
+
+    func testAlertVolumeCurveEndpointsAndRoundTrip() {
+        XCTAssertEqual(SystemSounds.rawAlertVolume(forPosition: 0), 0)
+        XCTAssertEqual(SystemSounds.rawAlertVolume(forPosition: -0.5), 0)
+        XCTAssertEqual(SystemSounds.rawAlertVolume(forPosition: 1), 1)
+        XCTAssertEqual(SystemSounds.rawAlertVolume(forPosition: 2), 1)
+        XCTAssertEqual(SystemSounds.rawAlertVolume(forPosition: .nan), 1)
+
+        for position in stride(from: 0.1, through: 0.9, by: 0.1) {
+            let raw = SystemSounds.rawAlertVolume(forPosition: position)
+            XCTAssertGreaterThan(raw, 0)
+            XCTAssertLessThan(raw, 1)
+            XCTAssertEqual(SystemSounds.position(forRawAlertVolume: raw), position, accuracy: 1e-5)
+        }
+        XCTAssertEqual(SystemSounds.position(forRawAlertVolume: 0), 0)
+        XCTAssertEqual(SystemSounds.position(forRawAlertVolume: .nan), 0)
+    }
+
+    func testCatalogExcludesSystemSoundsFromUserAppsAndCollectsObjects() {
+        let catalog = AudioProcessCatalog()
+        let alertProc = AudioProcess(objectID: 101, pid: 1001, bundleID: "com.apple.systemsoundserverd", isRunningOutput: true)
+        let notifProc = AudioProcess(objectID: 102, pid: 1002, bundleID: "com.apple.notificationcenterui", isRunningOutput: false)
+        let processes = [alertProc, notifProc]
+
+        XCTAssertTrue(catalog.groups(from: processes).isEmpty)
+        XCTAssertEqual(catalog.systemSoundObjects(from: processes, includeAlertDaemon: false), [102])
+        XCTAssertEqual(catalog.systemSoundObjects(from: processes, includeAlertDaemon: true), [101, 102])
+    }
+
+    @MainActor
+    func testMixerModelControlsAndIconForSystemSounds() {
+        let model = MixerModel(
+            preview: MixerSnapshot(
+                apps: [],
+                output: OutputState(name: "Speakers", volume: 0.8, isMuted: false, hasVolumeControl: true)
+            ),
+            settings: [:]
+        )
+
+        model.toggleMute(for: SystemSounds.id)
+        XCTAssertEqual(model.setting(for: SystemSounds.id), AppSetting(volume: 1, isMuted: true))
+
+        model.hover(.app(SystemSounds.id), true)
+        XCTAssertTrue(model.scrollHoveredSlider(by: 0.25))
+        XCTAssertEqual(model.setting(for: SystemSounds.id), AppSetting(volume: 0.25, isMuted: false))
+
+        let icon = model.icon(for: .systemSounds)
+        XCTAssertGreaterThan(icon.size.width, 0)
+        XCTAssertGreaterThan(icon.size.height, 0)
+    }
+}
