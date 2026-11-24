@@ -50,6 +50,9 @@ uint64_t nm_tap_state_callbacks(const nm_tap_state *_Nonnull state);
 /// receiving audio (typically a missing System Audio Recording permission).
 uint64_t nm_tap_state_audible_frames(const nm_tap_state *_Nonnull state);
 
+/// Peak input sample magnitude (0...1) from the most recent render callback.
+float nm_tap_state_peak(const nm_tap_state *_Nonnull state);
+
 /// Renders one cycle: copies the tap's audio to the output with the ramped
 /// gain applied. Real-time safe. Exposed separately from the IOProc so it can
 /// be unit tested with hand-built buffer lists.

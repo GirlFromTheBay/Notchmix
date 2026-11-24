@@ -65,7 +65,7 @@ public enum SystemSounds {
         guard position.isFinite else { return 1 }
         let clamped = min(max(position, 0), 1)
         if clamped <= 0 { return 0 }
-        if clamped >= 0.999 { return 1 }
+        if clamped >= AppSetting.fullVolume { return 1 }
         return Float(exp(clamped - 1.0))
     }
 
@@ -73,6 +73,21 @@ public enum SystemSounds {
     public static func position(forRawAlertVolume raw: Float) -> Double {
         guard raw.isFinite, raw > 0 else { return 0 }
         return min(max(Double(log(raw) + 1.0), 0), 1)
+    }
+
+    /// The user's own alert volume, kept on disk while we override it so a
+    /// crash or force-quit can't leave the system-wide setting changed.
+    public struct AlertVolumeBackup {
+        private static let key = "SavedAlertVolume"
+        let defaults: UserDefaults
+        public init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+        public var value: Float? {
+            get { defaults.object(forKey: Self.key) as? Float }
+            nonmutating set {
+                if let newValue { defaults.set(newValue, forKey: Self.key) } else { defaults.removeObject(forKey: Self.key) }
+            }
+        }
     }
 
     public static func readRawAlertVolume() -> Float? {

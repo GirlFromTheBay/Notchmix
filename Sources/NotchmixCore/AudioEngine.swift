@@ -16,6 +16,8 @@ public final class AudioEngine: @unchecked Sendable {
     /// How long a row stays after its app goes quiet, so a short pause
     /// does not make it vanish.
     static let lingerSeconds: TimeInterval = 4
+    /// How often the full process scan runs while the panel is open.
+    static let scanSeconds: TimeInterval = 1
     /// How long a tap outlives a return to full volume, so dragging through
     /// 100% does not create and destroy taps.
     static let releaseSeconds: TimeInterval = 1.5
@@ -31,7 +33,8 @@ public final class AudioEngine: @unchecked Sendable {
     private var groups: [AudioAppGroup] = []
     private var sessions: [String: TapSession] = [:]
     private var output: OutputDevice?
-    private var savedAlertVolume: Float?
+    private var availableOutputs: [OutputDevice] = []
+    private let alertBackup = SystemSounds.AlertVolumeBackup()
 
     private var lastPlaying: [String: Date] = [:]
     private var lastNonDefault: [String: Date] = [:]
@@ -61,6 +64,7 @@ public final class AudioEngine: @unchecked Sendable {
     private var processListeners: [AudioObjectID: PropertyListener] = [:]
     private var timer: DispatchSourceTimer?
     private var isRefreshScheduled = false
+    private var lastScan = Date.distantPast
     private var wakeObserver: NSObjectProtocol?
 
     /// - Parameters:
@@ -76,32 +80,34 @@ public final class AudioEngine: @unchecked Sendable {
 
     public func start() {
         queue.async { [self] in
+            // A previous run that died mid-override left the user's volume
+            // saved. Put it back first; this run then overrides it again if
+            // the System Sounds setting still asks for that.
+            restoreAlertVolume()
             installSystemListeners()
             applySystemSoundsAlertVolume()
             outputDidChange()
             startTimer()
-        }
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
-        ) { [weak self] _ in
-            // Devices re-enumerate after wake; give the HAL a moment, then
-            // rebuild every session rather than trust a stale one.
-            self?.queue.asyncAfter(deadline: .now() + 1) { self?.restartAllSessions() }
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
+            ) { [weak self] _ in
+                // Devices re-enumerate after wake; give the HAL a moment, then
+                // rebuild every session rather than trust a stale one.
+                self?.queue.asyncAfter(deadline: .now() + 1) { self?.restartAllSessions() }
+            }
         }
     }
 
     /// Releases every tap synchronously so apps are audible again before the
     /// process exits.
     public func shutdown() {
-        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
         queue.sync {
+            if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
+            wakeObserver = nil
             timer?.cancel()
             timer = nil
             stopAllSessions()
-            if let savedAlertVolume {
-                SystemSounds.writeRawAlertVolume(savedAlertVolume)
-                self.savedAlertVolume = nil
-            }
+            restoreAlertVolume()
             processListeners.removeAll()
             deviceListeners.removeAll()
             systemListeners.removeAll()
@@ -121,11 +127,11 @@ public final class AudioEngine: @unchecked Sendable {
             if !setting.isDefault {
                 lastNonDefault[id] = Date()
                 // Fast path for slider drags: only the gain moved.
-                if let session = sessions[id], !needsRestart.contains(id) {
-                    if id != SystemSounds.id || session.processObjects == catalog.systemSoundObjects(
-                        from: latestProcesses,
-                        includeAlertDaemon: setting.isMuted || setting.volume <= 0
-                    ) {
+                if let session = sessions[id],
+                   !needsRestart.contains(id),
+                   let target = targetOutput(for: setting),
+                   session.outputUID == target.device.uid {
+                    if id != SystemSounds.id || session.processObjects == systemSoundObjects(for: setting) {
                         session.gain = setting.gain
                         return
                     }
@@ -145,16 +151,21 @@ public final class AudioEngine: @unchecked Sendable {
     private func applySystemSoundsAlertVolume() {
         let setting = settings[SystemSounds.id] ?? .default
         if !setting.isDefault {
-            if savedAlertVolume == nil {
+            if alertBackup.value == nil {
                 let current = SystemSounds.readRawAlertVolume() ?? 1
-                savedAlertVolume = current > 0 ? current : 1
+                alertBackup.value = current > 0 ? current : 1
             }
             let target: Float = setting.isMuted ? 0 : SystemSounds.rawAlertVolume(forPosition: setting.volume)
             SystemSounds.writeRawAlertVolume(target)
-        } else if savedAlertVolume != nil {
-            SystemSounds.writeRawAlertVolume(1)
-            savedAlertVolume = nil
+        } else {
+            restoreAlertVolume()
         }
+    }
+
+    private func restoreAlertVolume() {
+        guard let saved = alertBackup.value else { return }
+        SystemSounds.writeRawAlertVolume(saved)
+        alertBackup.value = nil
     }
 
     public func setMasterVolume(_ volume: Float) {
@@ -163,6 +174,13 @@ public final class AudioEngine: @unchecked Sendable {
 
     public func setMasterMuted(_ muted: Bool) {
         queue.async { [self] in output?.setMuted(muted) }
+    }
+
+    public func selectOutputDevice(uid: String) {
+        queue.async { [self] in
+            OutputDevice.setDefaultOutput(uid: uid)
+            outputDidChange()
+        }
     }
 
     /// While the panel is open the list refreshes faster and rows are never
@@ -200,6 +218,9 @@ public final class AudioEngine: @unchecked Sendable {
             },
             PropertyListener(object: system, selector: kAudioHardwarePropertyDefaultOutputDevice, queue: queue) { [weak self] in
                 self?.outputDidChange()
+            },
+            PropertyListener(object: system, selector: kAudioHardwarePropertyDevices, queue: queue) { [weak self] in
+                self?.devicesDidChange()
             },
             PropertyListener(object: system, selector: kAudioHardwarePropertyServiceRestarted, queue: queue) { [weak self] in
                 self?.audioServiceDidRestart()
@@ -242,12 +263,20 @@ public final class AudioEngine: @unchecked Sendable {
     /// missed notifications and drives row expiry and the session watchdog.
     private func startTimer() {
         timer?.cancel()
-        let interval: TimeInterval = isPanelVisible ? 1 : 3
+        let interval: TimeInterval = isPanelVisible ? 0.15 : 3
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(200))
+        timer.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(isPanelVisible ? 20 : 200))
         timer.setEventHandler { [weak self] in
-            self?.checkSessionHealth()
-            self?.refresh()
+            guard let self else { return }
+            // The fast tick only feeds the peak meters. The watchdog needs a
+            // window long enough for a render cycle to land, and rescanning
+            // every process is what costs, so both stay at about once a second.
+            if Date().timeIntervalSince(lastScan) >= Self.scanSeconds - 0.05 {
+                checkSessionHealth()
+                refresh()
+            } else {
+                publish()
+            }
         }
         timer.resume()
         self.timer = timer
@@ -266,6 +295,7 @@ public final class AudioEngine: @unchecked Sendable {
     // MARK: Device changes
 
     private func outputDidChange() {
+        availableOutputs = OutputDevice.allOutputDevices()
         let newOutput = OutputDevice.current()
         if newOutput != output {
             output = newOutput
@@ -275,6 +305,11 @@ public final class AudioEngine: @unchecked Sendable {
             failureCount.removeAll()
         }
         // Sessions built on the old device are replaced by `reconcile`.
+        refresh()
+    }
+
+    private func devicesDidChange() {
+        availableOutputs = OutputDevice.allOutputDevices()
         refresh()
     }
 
@@ -298,6 +333,7 @@ public final class AudioEngine: @unchecked Sendable {
     // MARK: Scan, reconcile, publish
 
     private func refresh() {
+        lastScan = Date()
         let processes = catalog.processes()
         latestProcesses = processes
         updateProcessListeners(for: processes)
@@ -311,7 +347,7 @@ public final class AudioEngine: @unchecked Sendable {
     /// panel is open. Nothing is asked of the browser otherwise.
     private func updateSiteLabels() {
         let now = Date()
-        for group in groups where BrowserSites.safariBundleIDs.contains(group.identity.id) {
+        for group in groups where BrowserSites.supportedBundleIDs.contains(group.identity.id) {
             let id = group.identity.id
             guard group.isPlaying else {
                 siteLabels[id] = nil
@@ -344,6 +380,15 @@ public final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    /// The alert daemon is only tapped when alerts are muted outright; a
+    /// quieter alert volume is handled by the system itself.
+    private func systemSoundObjects(for setting: AppSetting) -> [AudioObjectID] {
+        catalog.systemSoundObjects(
+            from: latestProcesses,
+            includeAlertDaemon: setting.isMuted || setting.volume <= 0
+        )
+    }
+
     /// Makes the set of running sessions match the settings: one session per
     /// running app whose setting is not the default, none for anything else.
     private func reconcile() {
@@ -351,10 +396,7 @@ public final class AudioEngine: @unchecked Sendable {
         var effectiveGroups = groups
         let sysSetting = settings[SystemSounds.id] ?? .default
         if !sysSetting.isDefault {
-            let sysObjects = catalog.systemSoundObjects(
-                from: latestProcesses,
-                includeAlertDaemon: sysSetting.isMuted || sysSetting.volume <= 0
-            )
+            let sysObjects = systemSoundObjects(for: sysSetting)
             if !sysObjects.isEmpty {
                 let sysPlaying = latestProcesses.contains { sysObjects.contains($0.objectID) && $0.isRunningOutput }
                 effectiveGroups.append(AudioAppGroup(
@@ -391,7 +433,7 @@ public final class AudioEngine: @unchecked Sendable {
             }
 
             lastNonDefault[id] = now
-            guard mayTap, let output else { continue }
+            guard mayTap, let target = targetOutput(for: setting) else { continue }
 
             let objectsMatch = id == SystemSounds.id
                 ? sessions[id]?.processObjects == group.processObjects
@@ -399,13 +441,13 @@ public final class AudioEngine: @unchecked Sendable {
 
             if let session = sessions[id],
                objectsMatch,
-               session.outputUID == output.uid,
+               session.outputUID == target.device.uid,
                !needsRestart.contains(id) {
                 session.gain = setting.gain
                 continue
             }
             if let retry = retryAfter[id], now < retry { continue }
-            startSession(for: group, output: output, gain: setting.gain)
+            startSession(for: group, output: target.device, gain: setting.gain, isCustomRoute: target.isCustomRoute)
         }
 
         for id in sessions.keys where !liveIDs.contains(id) {
@@ -415,7 +457,16 @@ public final class AudioEngine: @unchecked Sendable {
         needsRestart.formIntersection(sessions.keys)
     }
 
-    private func startSession(for group: AudioAppGroup, output: OutputDevice, gain: Float) {
+    private func targetOutput(for setting: AppSetting) -> (device: OutputDevice, isCustomRoute: Bool)? {
+        if let customUID = setting.outputDeviceUID,
+           let matched = availableOutputs.first(where: { $0.uid == customUID }) {
+            return (matched, matched.uid != output?.uid)
+        }
+        guard let output else { return nil }
+        return (output, false)
+    }
+
+    private func startSession(for group: AudioAppGroup, output: OutputDevice, gain: Float, isCustomRoute: Bool) {
         let id = group.identity.id
         let old = sessions[id]
         do {
@@ -425,7 +476,8 @@ public final class AudioEngine: @unchecked Sendable {
             let session = try TapSession(
                 processObjects: group.processObjects,
                 output: output,
-                gain: old == nil ? gain : 0
+                gain: old == nil ? gain : 0,
+                isCustomRoute: isCustomRoute
             )
             old?.stop()
             session.gain = gain
@@ -552,6 +604,16 @@ public final class AudioEngine: @unchecked Sendable {
         }
     }
 
+    private func displayPeak(for id: String, isPlaying: Bool) -> Float {
+        let setting = settings[id] ?? .default
+        if setting.isMuted { return 0 }
+        if let session = sessions[id] {
+            let p = min(max(sqrt(session.peak), 0), 1)
+            return (p * 50).rounded() / 50
+        }
+        return isPlaying ? 0.72 : 0
+    }
+
     private func publish() {
         let now = Date()
         var apps: [MixerApp] = []
@@ -567,13 +629,25 @@ public final class AudioEngine: @unchecked Sendable {
                 name: group.identity.name,
                 bundlePath: group.identity.bundlePath,
                 isPlaying: group.isPlaying,
-                detail: siteLabels[id]
+                detail: siteLabels[id],
+                peak: displayPeak(for: id, isPlaying: group.isPlaying)
             ))
         }
         apps.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         shownIDs = Set(apps.map(\.id))
         let liveIDs = Set(groups.map(\.identity.id))
         lastPlaying = lastPlaying.filter { liveIDs.contains($0.key) }
+
+        let sysPlaying = latestProcesses.contains {
+            SystemSounds.isSystemSoundProcess(
+                bundleID: $0.bundleID,
+                executablePath: $0.executablePath
+            ) && $0.isRunningOutput
+        }
+        let sysPeak = displayPeak(for: SystemSounds.id, isPlaying: sysPlaying)
+        let deviceInfos = availableOutputs.map {
+            OutputDeviceInfo(id: $0.uid, name: $0.name, isDefault: $0.uid == output?.uid)
+        }
 
         let outputState = output.map { device in
             OutputState(
@@ -583,7 +657,13 @@ public final class AudioEngine: @unchecked Sendable {
                 hasVolumeControl: device.hasVolumeControl
             )
         }
-        let snapshot = MixerSnapshot(apps: apps, output: outputState, needsPermission: isPermissionBlocked)
+        let snapshot = MixerSnapshot(
+            apps: apps,
+            output: outputState,
+            devices: deviceInfos,
+            systemSoundsPeak: sysPeak,
+            needsPermission: isPermissionBlocked
+        )
         guard snapshot != lastSnapshot else { return }
         lastSnapshot = snapshot
         onSnapshot(snapshot)

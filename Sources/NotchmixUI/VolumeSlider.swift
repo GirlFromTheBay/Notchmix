@@ -20,6 +20,7 @@ enum Metrics {
 struct VolumeSlider: View {
     @Binding var value: Double
     var isMuted: Bool
+    var peak: Double = 0
     var label: String
     var onToggleMute: () -> Void
     var onEditingChanged: (Bool) -> Void = { _ in }
@@ -43,6 +44,7 @@ struct VolumeSlider: View {
         GeometryReader { proxy in
             let travel = max(proxy.size.width - height, 1)
             let knobCenter = height / 2 + travel * value
+            let clampedPeak = isMuted ? 0 : min(max(peak, 0), 1)
 
             ZStack(alignment: .leading) {
                 Capsule()
@@ -52,9 +54,15 @@ struct VolumeSlider: View {
                 // shape at rest; held, it stops at the centre and the glass
                 // knob shows the boundary through itself.
                 Capsule()
-                    .fill(.white)
+                    .fill(.white.opacity(clampedPeak > 0.01 ? 0.55 : 1))
                     .frame(width: knobCenter + (isPressed ? 0 : height / 2))
                     .opacity(isMuted ? 0.4 : 1)
+
+                if clampedPeak > 0.01 && value > 0.01 {
+                    Capsule()
+                        .fill(.white)
+                        .frame(width: height / 2 + travel * value * clampedPeak)
+                }
 
                 knob
                     .position(x: knobCenter, y: height / 2)

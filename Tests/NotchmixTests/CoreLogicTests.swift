@@ -361,6 +361,17 @@ final class SpotifyRemoteTests: XCTestCase {
 }
 
 final class SystemSoundsTests: XCTestCase {
+    func testAlertVolumeBackupSurvivesAndClears() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "NotchmixTests.\(UUID().uuidString)"))
+        let backup = SystemSounds.AlertVolumeBackup(defaults: defaults)
+        XCTAssertNil(backup.value)
+        backup.value = 0.4
+        // A new instance (the next launch) still sees the user's volume.
+        XCTAssertEqual(SystemSounds.AlertVolumeBackup(defaults: defaults).value, 0.4)
+        backup.value = nil
+        XCTAssertNil(SystemSounds.AlertVolumeBackup(defaults: defaults).value)
+    }
+
     func testClassifiesSystemSoundProcessesByBundleIDAndPath() {
         XCTAssertTrue(SystemSounds.isAlertDaemon(bundleID: "com.apple.systemsoundserverd", executablePath: nil))
         XCTAssertTrue(SystemSounds.isAlertDaemon(bundleID: nil, executablePath: "/usr/sbin/systemsoundserverd"))
@@ -432,5 +443,67 @@ final class SystemSoundsTests: XCTestCase {
         let icon = model.icon(for: .systemSounds)
         XCTAssertGreaterThan(icon.size.width, 0)
         XCTAssertGreaterThan(icon.size.height, 0)
+    }
+}
+
+final class EnhancedMixerFeaturesTests: XCTestCase {
+    func testCustomOutputDeviceMakesSettingNonDefaultAndRoundTrips() throws {
+        let routed = AppSetting(volume: 1, isMuted: false, outputDeviceUID: "usb-dac")
+        XCTAssertFalse(routed.isDefault)
+        let data = try JSONEncoder().encode(routed)
+        XCTAssertEqual(try JSONDecoder().decode(AppSetting.self, from: data), routed)
+
+        let cleared = AppSetting(volume: 1, isMuted: false, outputDeviceUID: nil)
+        XCTAssertTrue(cleared.isDefault)
+    }
+
+    @MainActor
+    func testPerAppOutputRoutingClearsBackToDefault() {
+        let model = MixerModel(
+            preview: MixerSnapshot(
+                apps: [MixerApp(id: "a", name: "App A", bundlePath: nil, isPlaying: true)],
+                output: OutputState(name: "Speakers", volume: 0.8, isMuted: false, hasVolumeControl: true),
+                devices: [
+                    OutputDeviceInfo(id: "speakers", name: "Speakers", isDefault: true),
+                    OutputDeviceInfo(id: "headphones", name: "Headphones", isDefault: false),
+                ]
+            ),
+            settings: [:]
+        )
+
+        model.setOutputDevice("headphones", for: "a")
+        XCTAssertEqual(model.setting(for: "a").outputDeviceUID, "headphones")
+        XCTAssertEqual(model.routedDeviceName(for: "a"), "Headphones")
+
+        // Choosing the current default output clears the override so the app
+        // can be released back to bit-perfect default playback.
+        model.setOutputDevice("speakers", for: "a")
+        XCTAssertNil(model.setting(for: "a").outputDeviceUID)
+        XCTAssertNil(model.routedDeviceName(for: "a"))
+        XCTAssertTrue(model.setting(for: "a").isDefault)
+    }
+
+    func testMediaPlayerSelectionPrefersPlayingApp() {
+        XCTAssertNil(MediaPlayer.activePlayer(
+            spotifyRunning: false, spotifyPlaying: false, musicRunning: false, musicPlaying: false
+        ))
+        XCTAssertEqual(MediaPlayer.activePlayer(
+            spotifyRunning: true, spotifyPlaying: false, musicRunning: true, musicPlaying: true
+        ), .appleMusic)
+        XCTAssertEqual(MediaPlayer.activePlayer(
+            spotifyRunning: true, spotifyPlaying: true, musicRunning: true, musicPlaying: false
+        ), .spotify)
+        XCTAssertEqual(MediaPlayer.activePlayer(
+            spotifyRunning: true, spotifyPlaying: true, musicRunning: true, musicPlaying: true, preferred: .appleMusic
+        ), .appleMusic)
+    }
+
+    func testBrowserSitesSupportsChromiumAndOperaBrowsers() {
+        XCTAssertTrue(BrowserSites.supportedBundleIDs.contains("com.apple.Safari"))
+        XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("com.google.Chrome"))
+        XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("com.brave.Browser"))
+        XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("company.thebrowser.Browser"))
+        XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("com.microsoft.edgemac"))
+        XCTAssertTrue(BrowserSites.chromiumBundleIDs.contains("com.operasoftware.OperaGX"))
     }
 }

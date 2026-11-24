@@ -27,11 +27,14 @@ public struct MixerPanel: View {
                 PanelDivider()
                 PermissionNotice()
             }
-            if model.isSpotifyRunning {
+            if let player = model.activeMediaPlayer {
                 PanelDivider()
-                SpotifyControls(model: model)
+                MediaControls(player: player, model: model)
             }
             PanelDivider()
+            PanelButton("Start at Login", isChecked: model.launchAtLogin) {
+                model.toggleLaunchAtLogin()
+            }
             PanelButton("Quit Notchmix") { NSApplication.shared.terminate(nil) }
                 .keyboardShortcut("q")
                 .padding(.bottom, Metrics.highlightInset)
@@ -45,9 +48,37 @@ public struct MixerPanel: View {
     @ViewBuilder
     private var masterSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(model.output?.name ?? "Sound")
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
+            if model.devices.count > 1 {
+                Menu {
+                    ForEach(model.devices) { device in
+                        Button {
+                            model.selectOutputDevice(uid: device.id)
+                        } label: {
+                            if device.isDefault {
+                                Label(device.name, systemImage: "checkmark")
+                            } else {
+                                Text(device.name)
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(model.output?.name ?? "Sound")
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.plain)
+            } else {
+                Text(model.output?.name ?? "Sound")
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+            }
 
             if model.output?.hasVolumeControl == true {
                 VolumeSlider(
@@ -124,6 +155,8 @@ private struct AppRow: View {
 
     var body: some View {
         let setting = model.setting(for: app.id)
+        let routedName = app.id == SystemSounds.id ? nil : model.routedDeviceName(for: app.id)
+        let canRoute = app.id != SystemSounds.id && (model.devices.count > 1 || routedName != nil)
 
         HStack(spacing: Metrics.rowSpacing) {
             Button {
@@ -141,10 +174,35 @@ private struct AppRow: View {
             .accessibilityLabel(setting.isMuted ? "Unmute \(app.name)" : "Mute \(app.name)")
 
             VStack(alignment: .leading, spacing: 4) {
-                title
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                HStack(spacing: 6) {
+                    title
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 4)
+
+                    if canRoute {
+                        Menu {
+                            routeMenuItems
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "airplayaudio")
+                                    .font(.system(size: 9.5, weight: .medium))
+                                if let routedName {
+                                    Text(routedName)
+                                        .font(.system(size: 10, weight: .medium))
+                                        .lineLimit(1)
+                                }
+                            }
+                            .foregroundStyle(routedName != nil ? .primary : .secondary)
+                            .contentShape(Rectangle())
+                        }
+                        .menuStyle(.borderlessButton)
+                        .buttonStyle(.plain)
+                        .help(routedName.map { "Output: \($0)" } ?? "Choose output device for \(app.name)")
+                    }
+                }
 
                 VolumeSlider(
                     value: Binding(
@@ -152,6 +210,7 @@ private struct AppRow: View {
                         set: { model.setVolume($0, for: app.id) }
                     ),
                     isMuted: setting.isMuted,
+                    peak: Double(app.id == SystemSounds.id ? model.systemSoundsPeak : app.peak),
                     label: "\(app.name) volume",
                     onToggleMute: { model.toggleMute(for: app.id) }
                 )
@@ -160,7 +219,41 @@ private struct AppRow: View {
         }
         .padding(.horizontal, Metrics.horizontalPadding)
         .frame(height: Self.height)
+        .contentShape(Rectangle())
+        .contextMenu {
+            if canRoute {
+                routeMenuItems
+            }
+        }
         .animation(.snappy(duration: 0.2), value: setting.isMuted)
+    }
+
+    @ViewBuilder
+    private var routeMenuItems: some View {
+        let selectedUID = model.setting(for: app.id).outputDeviceUID
+        Button {
+            model.setOutputDevice(nil, for: app.id)
+        } label: {
+            if selectedUID == nil {
+                Label("Default Output", systemImage: "checkmark")
+            } else {
+                Text("Default Output")
+            }
+        }
+        if !model.devices.isEmpty {
+            Divider()
+            ForEach(model.devices) { device in
+                Button {
+                    model.setOutputDevice(device.id, for: app.id)
+                } label: {
+                    if selectedUID == device.id {
+                        Label(device.name, systemImage: "checkmark")
+                    } else {
+                        Text(device.name)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -184,33 +277,35 @@ private struct PermissionNotice: View {
     }
 }
 
-/// Previous, play or pause, and next for Spotify.
-private struct SpotifyControls: View {
+/// Previous, play or pause, and next for Spotify or Apple Music.
+private struct MediaControls: View {
+    let player: MediaPlayer
     let model: MixerModel
 
     var body: some View {
+        let isPlaying = model.isActiveMediaPlaying
         HStack(spacing: 2) {
-            if let icon = model.spotifyIcon {
+            if let icon = model.mediaIcon(for: player) {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 20, height: 20)
                     .padding(.trailing, 6)
             }
-            Text("Spotify")
+            Text(player.displayName)
                 .font(.system(size: 13))
             Spacer(minLength: 8)
             TransportButton(symbol: "backward.fill", label: "Previous track") {
-                model.sendSpotify(.previous)
+                model.sendMediaCommand(.previous, to: player)
             }
             TransportButton(
-                symbol: model.isSpotifyPlaying ? "pause.fill" : "play.fill",
-                label: model.isSpotifyPlaying ? "Pause" : "Play"
+                symbol: isPlaying ? "pause.fill" : "play.fill",
+                label: isPlaying ? "Pause" : "Play"
             ) {
-                model.sendSpotify(.playPause)
+                model.sendMediaCommand(.playPause, to: player)
             }
             TransportButton(symbol: "forward.fill", label: "Next track") {
-                model.sendSpotify(.next)
+                model.sendMediaCommand(.next, to: player)
             }
         }
         .padding(.leading, Metrics.horizontalPadding)
@@ -258,28 +353,39 @@ private struct PanelDivider: View {
 /// at the bottom of the system's Sound module.
 private struct PanelButton: View {
     let title: String
+    var isChecked: Bool? = nil
     let action: () -> Void
     @State private var isHovered = false
 
-    init(_ title: String, action: @escaping () -> Void) {
+    init(_ title: String, isChecked: Bool? = nil, action: @escaping () -> Void) {
         self.title = title
+        self.isChecked = isChecked
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(.system(size: 13))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Metrics.horizontalPadding - Metrics.highlightInset)
-                .frame(height: 26)
-                .background {
-                    // Concentric with the panel where the system exposes its
-                    // shape, with a sensible radius where it does not.
-                    ConcentricRectangle(corners: .concentric(minimum: .fixed(7)), isUniform: true)
-                        .fill(.primary.opacity(isHovered ? 0.1 : 0))
+            HStack {
+                Text(title)
+                    .font(.system(size: 13))
+                Spacer(minLength: 8)
+                if let isChecked {
+                    Image(systemName: isChecked ? "checkmark" : "")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .opacity(isChecked ? 1 : 0)
                 }
-                .contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Metrics.horizontalPadding - Metrics.highlightInset)
+            .frame(height: 26)
+            .background {
+                // Concentric with the panel where the system exposes its
+                // shape, with a sensible radius where it does not.
+                ConcentricRectangle(corners: .concentric(minimum: .fixed(7)), isUniform: true)
+                    .fill(.primary.opacity(isHovered ? 0.1 : 0))
+            }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .padding(.horizontal, Metrics.highlightInset)

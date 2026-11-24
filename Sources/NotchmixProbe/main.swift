@@ -42,23 +42,29 @@ func listAudioApps() {
 @MainActor
 func sampleModel() -> MixerModel {
     let apps = [
-        ("com.apple.Music", "Music", "/System/Applications/Music.app"),
-        ("com.apple.Safari", "Safari", "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app"),
-        ("com.apple.TV", "TV", "/System/Applications/TV.app"),
+        ("com.apple.Music", "Music", "/System/Applications/Music.app", Float(0.75)),
+        ("com.apple.Safari", "Safari", "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app", Float(0.6)),
+        ("com.apple.TV", "TV", "/System/Applications/TV.app", Float(0)),
     ].map {
         MixerApp(
             id: $0.0, name: $0.1, bundlePath: $0.2, isPlaying: true,
-            detail: $0.0 == "com.apple.Safari" ? "youtube, roll20" : nil
+            detail: $0.0 == "com.apple.Safari" ? "youtube, roll20" : nil,
+            peak: $0.3
         )
     }
 
     return MixerModel(
         preview: MixerSnapshot(
             apps: apps,
-            output: OutputState(name: "MacBook Pro Speakers", volume: 0.6, isMuted: false, hasVolumeControl: true)
+            output: OutputState(name: "MacBook Pro Speakers", volume: 0.6, isMuted: false, hasVolumeControl: true),
+            devices: [
+                OutputDeviceInfo(id: "speakers", name: "MacBook Pro Speakers", isDefault: true),
+                OutputDeviceInfo(id: "airpods", name: "AirPods Pro", isDefault: false),
+            ],
+            systemSoundsPeak: 0
         ),
         settings: [
-            "com.apple.Safari": AppSetting(volume: 0.35),
+            "com.apple.Safari": AppSetting(volume: 0.35, outputDeviceUID: "airpods"),
             "com.apple.TV": AppSetting(volume: 0.7, isMuted: true),
         ],
         spotifyRunning: true

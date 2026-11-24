@@ -48,7 +48,7 @@ final class TapSession {
     private var procID: AudioDeviceIOProcID?
     private var isStopped = false
 
-    init(processObjects: [AudioObjectID], output: OutputDevice, gain: Float) throws {
+    init(processObjects: [AudioObjectID], output: OutputDevice, gain: Float, isCustomRoute: Bool = false) throws {
         self.processObjects = processObjects
         self.outputUID = output.uid
 
@@ -59,8 +59,9 @@ final class TapSession {
 
         let tap = try Self.makeTap(
             processObjects: processObjects,
-            // A device-specific tap keeps the device's own channel layout.
-            deviceUID: isFlattened ? nil : output.uid,
+            // A device-specific tap keeps the device's own channel layout,
+            // unless we're routing an app away from the default output.
+            deviceUID: (isFlattened || isCustomRoute) ? nil : output.uid,
             device: output.id
         )
         tapID = tap.id
@@ -152,6 +153,9 @@ final class TapSession {
 
     /// Frames in which the tap carried real audio, measured before gain.
     var audibleFrames: UInt64 { nm_tap_state_audible_frames(state) }
+
+    /// Peak input sample magnitude (0...1) from the latest render cycle.
+    var peak: Float { nm_tap_state_peak(state) }
 
     /// Stops rendering and releases the tap, which un-mutes the app.
     func stop() {

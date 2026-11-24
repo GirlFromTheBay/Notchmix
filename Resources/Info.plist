@@ -31,7 +31,7 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Notchmix asks Safari which sites are playing audio, to label its volume slider, and sends play, pause and skip to Spotify when you use those buttons.</string>
+    <string>Notchmix asks browsers which sites are playing audio, to label their volume sliders, and sends play, pause and skip to Spotify or Music when you use those buttons.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Notchmix reads an app's audio only to play it back at the volume you set. Nothing is recorded, stored or sent anywhere.</string>
     <key>NSMicrophoneUsageDescription</key>

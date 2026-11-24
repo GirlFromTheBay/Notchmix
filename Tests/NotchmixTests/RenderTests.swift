@@ -253,6 +253,15 @@ final class RenderTests: XCTestCase {
         XCTAssertEqual(nm_tap_state_audible_frames(state), 8, "digital silence does not count")
     }
 
+    func testPeakTracksMaximumPreGainSampleMagnitude() {
+        let state = makeState(gain: 0)
+        render(state, Buffers([(2, [0.2, -0.6, 0.4, -0.1])]), Buffers([(2, [Float](repeating: 0, count: 4))]))
+        XCTAssertEqual(nm_tap_state_peak(state), 0.6, accuracy: 1e-6)
+
+        render(state, Buffers([(2, [Float](repeating: 0, count: 4))]), Buffers([(2, [Float](repeating: 0, count: 4))]))
+        XCTAssertEqual(nm_tap_state_peak(state), 0)
+    }
+
     func testStreamUsageIsANoOpWhenNothingNeedsSwitchingOff() {
         // No extra input streams means no HAL call at all, so even a bogus
         // device and callback must report success.

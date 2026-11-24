@@ -7,12 +7,18 @@ public struct AudioProcess: Equatable, Sendable {
     public let objectID: AudioObjectID
     public let pid: pid_t
     public let bundleID: String?
+    /// Read once per scan, so nothing downstream repeats the syscall.
+    public let executablePath: String?
     public let isRunningOutput: Bool
 
-    public init(objectID: AudioObjectID, pid: pid_t, bundleID: String? = nil, isRunningOutput: Bool) {
+    public init(
+        objectID: AudioObjectID, pid: pid_t, bundleID: String? = nil,
+        executablePath: String? = nil, isRunningOutput: Bool
+    ) {
         self.objectID = objectID
         self.pid = pid
         self.bundleID = bundleID
+        self.executablePath = executablePath
         self.isRunningOutput = isRunningOutput
     }
 }
@@ -44,7 +50,10 @@ public final class AudioProcessCatalog {
                       pid > 0, pid != ownPID else { return nil }
                 let bundleID = objectID.readString(kAudioProcessPropertyBundleID)
                 let running: UInt32 = objectID.read(kAudioProcessPropertyIsRunningOutput) ?? 0
-                return AudioProcess(objectID: objectID, pid: pid, bundleID: bundleID, isRunningOutput: running != 0)
+                return AudioProcess(
+                    objectID: objectID, pid: pid, bundleID: bundleID,
+                    executablePath: ProcessInspector.executablePath(of: pid), isRunningOutput: running != 0
+                )
             }
     }
 
@@ -57,11 +66,10 @@ public final class AudioProcessCatalog {
         var playing: Set<String> = []
 
         for process in processes {
-            let execPath = ProcessInspector.executablePath(of: process.pid)
-            if SystemSounds.isSystemSoundProcess(bundleID: process.bundleID, executablePath: execPath) {
+            if SystemSounds.isSystemSoundProcess(bundleID: process.bundleID, executablePath: process.executablePath) {
                 continue
             }
-            guard let identity = resolver.resolve(pid: process.pid) else { continue }
+            guard let identity = resolver.resolve(pid: process.pid, executablePath: process.executablePath) else { continue }
             if identities[identity.id] == nil {
                 identities[identity.id] = identity
                 order.append(identity.id)
@@ -83,14 +91,10 @@ public final class AudioProcessCatalog {
 
     public func systemSoundObjects(from processes: [AudioProcess], includeAlertDaemon: Bool) -> [AudioObjectID] {
         processes.compactMap { process in
-            let execPath = ProcessInspector.executablePath(of: process.pid)
+            let execPath = process.executablePath
             let isNotification = SystemSounds.isNotificationProcess(bundleID: process.bundleID, executablePath: execPath)
             let isAlert = includeAlertDaemon && SystemSounds.isAlertDaemon(bundleID: process.bundleID, executablePath: execPath)
             return (isNotification || isAlert) ? process.objectID : nil
         }.sorted()
-    }
-
-    public func scan() -> [AudioAppGroup] {
-        groups(from: processes())
     }
 }

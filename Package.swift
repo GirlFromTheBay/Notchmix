@@ -9,7 +9,10 @@ let package = Package(
     targets: [
         // C11 real-time render callback. Kept in C so the audio thread can
         // never reach the Swift runtime (no allocation, no locks, no ARC).
-        .target(name: "CAudioRender"),
+        .target(
+            name: "CAudioRender",
+            cSettings: [.unsafeFlags(["-Wall", "-Wextra"])]
+        ),
 
         // Core Audio control plane: discovery, taps, devices, permission.
         .target(
@@ -20,6 +23,7 @@ let package = Package(
                 .linkedFramework("AudioToolbox"),
                 .linkedFramework("AppKit"),
                 .linkedFramework("IOKit"),
+                .linkedFramework("ServiceManagement"),
             ]
         ),
 

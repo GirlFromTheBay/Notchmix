@@ -1,6 +1,6 @@
 import Foundation
 
-/// Transport control for the Spotify desktop app.
+/// Spotify constants shared with `MediaPlayer`, which does the sending.
 public enum SpotifyRemote {
     public static let bundleID = "com.spotify.client"
 
@@ -24,20 +24,72 @@ public enum SpotifyRemote {
         }
     }
 
-    private static let queue = DispatchQueue(label: "Notchmix.SpotifyRemote", qos: .userInitiated)
+    public static func isPlaying(in notification: Notification) -> Bool? {
+        (notification.userInfo?["Player State"] as? String).map { $0 == "Playing" }
+    }
+}
 
-    public static var isRunning: Bool { AppleEvents.isRunning(bundleID) }
+/// Supported desktop media players with Apple Events transport control.
+public enum MediaPlayer: String, CaseIterable, Equatable, Sendable {
+    case spotify = "com.spotify.client"
+    case appleMusic = "com.apple.Music"
 
-    /// Sends a command. The first use shows the system's prompt asking
-    /// whether this app may control Spotify.
-    public static func send(_ command: Command) {
-        queue.async {
-            guard AppleEvents.permission(for: bundleID, askUser: true) == .granted else { return }
-            try? AppleEvents.send(class: "spfy", id: command.eventID, to: bundleID, timeout: 5)
+    public var bundleID: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .spotify: return "Spotify"
+        case .appleMusic: return "Music"
         }
     }
 
-    public static func isPlaying(in notification: Notification) -> Bool? {
-        (notification.userInfo?["Player State"] as? String).map { $0 == "Playing" }
+    public var eventClass: String {
+        switch self {
+        case .spotify: return "spfy"
+        case .appleMusic: return "hook"
+        }
+    }
+
+    public var stateNotification: Notification.Name {
+        switch self {
+        case .spotify: return SpotifyRemote.stateNotification
+        case .appleMusic: return Notification.Name("com.apple.Music.playerInfo")
+        }
+    }
+
+    public var isRunning: Bool { AppleEvents.isRunning(bundleID) }
+
+    private static let queue = DispatchQueue(label: "Notchmix.MediaPlayer", qos: .userInitiated)
+
+    /// Sends a command. The first use shows the system's prompt asking
+    /// whether this app may control the player.
+    public func send(_ command: SpotifyRemote.Command) {
+        let bundleID = bundleID
+        let eventClass = eventClass
+        let eventID = command.eventID
+        Self.queue.async {
+            guard AppleEvents.permission(for: bundleID, askUser: true) == .granted else { return }
+            try? AppleEvents.send(class: eventClass, id: eventID, to: bundleID, timeout: 5)
+        }
+    }
+
+    public static func activePlayer(
+        spotifyRunning: Bool,
+        spotifyPlaying: Bool,
+        musicRunning: Bool,
+        musicPlaying: Bool,
+        preferred: MediaPlayer? = nil
+    ) -> MediaPlayer? {
+        let spotifyActive = spotifyRunning && spotifyPlaying
+        let musicActive = musicRunning && musicPlaying
+        if spotifyActive && !musicActive { return .spotify }
+        if musicActive && !spotifyActive { return .appleMusic }
+        if spotifyRunning && musicRunning {
+            if let preferred { return preferred }
+            return .spotify
+        }
+        if spotifyRunning { return .spotify }
+        if musicRunning { return .appleMusic }
+        return nil
     }
 }

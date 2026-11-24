@@ -16,7 +16,8 @@ enum AppleEvents {
     }
 
     static func code(_ string: String) -> FourCharCode {
-        string.utf8.prefix(4).reduce(0) { ($0 << 8) | FourCharCode($1) }
+        precondition(string.utf8.count == 4, "Apple Event codes are four characters: \(string)")
+        return string.utf8.reduce(0) { ($0 << 8) | FourCharCode($1) }
     }
 
     static func isRunning(_ bundleID: String) -> Bool {

@@ -16,6 +16,30 @@ struct OutputDevice: Equatable {
         return OutputDevice(id: id, uid: uid, name: name)
     }
 
+    static func allOutputDevices() -> [OutputDevice] {
+        let ids = AudioObjectID.system.readArray(kAudioHardwarePropertyDevices, of: AudioObjectID.self)
+        return ids.compactMap { id in
+            guard id != .unknown,
+                  let uid = id.readString(kAudioDevicePropertyDeviceUID),
+                  !uid.hasPrefix("Notchmix-"),
+                  (id.read(kAudioDevicePropertyIsHidden, as: UInt32.self) ?? 0) == 0,
+                  id.channelCount(scope: kAudioObjectPropertyScopeOutput) > 0 else {
+                return nil
+            }
+            let name = id.readString(kAudioObjectPropertyName) ?? "Output"
+            return OutputDevice(id: id, uid: uid, name: name)
+        }
+        .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    @discardableResult
+    static func setDefaultOutput(uid: String) -> Bool {
+        guard let device = allOutputDevices().first(where: { $0.uid == uid }) else { return false }
+        let okDefault = AudioObjectID.system.write(kAudioHardwarePropertyDefaultOutputDevice, value: device.id)
+        let okSystem = AudioObjectID.system.write(kAudioHardwarePropertyDefaultSystemOutputDevice, value: device.id)
+        return okDefault || okSystem
+    }
+
     var sampleRate: Double {
         id.read(kAudioDevicePropertyNominalSampleRate, as: Float64.self) ?? 48_000
     }

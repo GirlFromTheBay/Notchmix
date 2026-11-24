@@ -20,3 +20,13 @@ xcuserdata/
 # Local notes that are not part of the project.
 /gemini_github_guide.md
 /github_report.md
+
+# AI tooling: local only, never committed.
+/.claude/
+/.agents/
+/skills/
+/skills-lock.json
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+.mcp.json

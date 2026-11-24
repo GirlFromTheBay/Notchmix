@@ -25,7 +25,7 @@ You should get a reply within a week. Once a fix is released, the advisory is pu
 
 ## What is in scope
 
-Notchmix reads other apps' audio in order to replay it at a chosen level, and sends Apple Events to Safari and Spotify. Reports of particular interest:
+Notchmix reads other apps' audio in order to replay it at a chosen level, and sends Apple Events to browsers (to read tab addresses), Spotify and Music. It also uses a few undocumented system interfaces, listed in the README under "Private interfaces". Reports of particular interest:
 
 - audio being stored, transmitted, or exposed to another process
 - a way for another app to make Notchmix act on its behalf

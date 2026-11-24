@@ -102,7 +102,11 @@ public final class AppIdentityResolver {
     /// Resolves `pid`, reusing the previous answer while the pid still runs
     /// the same executable (which also guards against pid reuse).
     public func resolve(pid: pid_t) -> AppIdentity? {
-        let path = ProcessInspector.executablePath(of: pid)
+        resolve(pid: pid, executablePath: ProcessInspector.executablePath(of: pid))
+    }
+
+    /// As `resolve(pid:)`, for a caller that already read the path.
+    public func resolve(pid: pid_t, executablePath path: String?) -> AppIdentity? {
         if let cached = pidCache[pid], cached.executablePath == path {
             return cached.identity
         }

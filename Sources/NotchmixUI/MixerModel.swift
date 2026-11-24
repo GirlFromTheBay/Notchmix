@@ -19,14 +19,28 @@ public enum SliderTarget: Hashable, Sendable {
 public final class MixerModel {
     public private(set) var apps: [MixerApp] = []
     public private(set) var output: OutputState?
+    public private(set) var devices: [OutputDeviceInfo] = []
+    public private(set) var systemSoundsPeak: Float = 0
     public private(set) var needsPermission = false
     public private(set) var settings: [String: AppSetting]
 
     public private(set) var masterVolume: Double = 1
     public private(set) var isMasterMuted = false
 
-    public private(set) var isSpotifyRunning = false
-    public private(set) var isSpotifyPlaying = false
+    /// What we know about one media player.
+    struct PlayerState {
+        var isRunning = false
+        var isPlaying = false
+        /// Once the player has announced its state, that is more exact than
+        /// inferring it from whether audio is flowing.
+        var hasAnnounced = false
+    }
+
+    private(set) var players: [MediaPlayer: PlayerState] = Dictionary(
+        uniqueKeysWithValues: MediaPlayer.allCases.map { ($0, PlayerState()) }
+    )
+    public private(set) var preferredMediaPlayer: MediaPlayer?
+    public private(set) var launchAtLogin = LoginItem.isEnabled
 
     @ObservationIgnored var hoveredSlider: SliderTarget?
     @ObservationIgnored private var isEditingMaster = false
@@ -36,9 +50,6 @@ public final class MixerModel {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var terminationObserver: NSObjectProtocol?
     @ObservationIgnored private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
-    /// Once Spotify has announced its state, that is more exact than
-    /// inferring it from whether audio is flowing.
-    @ObservationIgnored private var hasSpotifyState = false
     /// `nil` for preview models, which must never touch saved settings.
     @ObservationIgnored private let defaults: UserDefaults?
 
@@ -67,14 +78,14 @@ public final class MixerModel {
                 self?.engine?.shutdown()
             }
         }
-        observeSpotify()
+        observeMediaPlayers()
     }
 
     /// A model with fixed content and no audio engine, for layout checks.
     public init(preview snapshot: MixerSnapshot, settings: [String: AppSetting], spotifyRunning: Bool = false) {
         self.defaults = nil
         self.settings = settings
-        self.isSpotifyRunning = spotifyRunning
+        players[.spotify]?.isRunning = spotifyRunning
         apply(snapshot)
     }
 
@@ -83,6 +94,8 @@ public final class MixerModel {
     private func apply(_ snapshot: MixerSnapshot) {
         apps = snapshot.apps
         output = snapshot.output
+        devices = snapshot.devices
+        systemSoundsPeak = snapshot.systemSoundsPeak
         needsPermission = snapshot.needsPermission
         // While the master slider is being dragged the pointer is the truth;
         // an echo from the device would make the knob stutter.
@@ -90,61 +103,79 @@ public final class MixerModel {
             masterVolume = Double(output.volume)
             isMasterMuted = output.isMuted
         }
-        if !hasSpotifyState, let spotify = snapshot.apps.first(where: { $0.id == SpotifyRemote.bundleID }) {
-            isSpotifyPlaying = spotify.isPlaying
+        for player in MediaPlayer.allCases where players[player]?.hasAnnounced == false {
+            if let app = snapshot.apps.first(where: { $0.id == player.bundleID }) {
+                players[player]?.isPlaying = app.isPlaying
+            }
         }
     }
 
-    // MARK: Spotify
+    // MARK: Media transport (Spotify & Apple Music)
 
-    var spotifyIcon: NSImage? {
-        if let cached = icons[SpotifyRemote.bundleID] { return cached }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: SpotifyRemote.bundleID) else {
+    public var activeMediaPlayer: MediaPlayer? {
+        MediaPlayer.activePlayer(
+            spotifyRunning: players[.spotify]?.isRunning ?? false,
+            spotifyPlaying: players[.spotify]?.isPlaying ?? false,
+            musicRunning: players[.appleMusic]?.isRunning ?? false,
+            musicPlaying: players[.appleMusic]?.isPlaying ?? false,
+            preferred: preferredMediaPlayer
+        )
+    }
+
+    public var isActiveMediaPlaying: Bool {
+        activeMediaPlayer.flatMap { players[$0]?.isPlaying } ?? false
+    }
+
+    func mediaIcon(for player: MediaPlayer) -> NSImage? {
+        if let cached = icons[player.bundleID] { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: player.bundleID) else {
             return nil
         }
         let image = NSWorkspace.shared.icon(forFile: url.path)
-        icons[SpotifyRemote.bundleID] = image
+        icons[player.bundleID] = image
         return image
     }
 
-    public func sendSpotify(_ command: SpotifyRemote.Command) {
-        // Show the new state at once; Spotify's own announcement follows and
-        // corrects it if the command did not take.
-        if command == .playPause { isSpotifyPlaying.toggle() }
-        SpotifyRemote.send(command)
+    public func sendMediaCommand(_ command: SpotifyRemote.Command, to explicitPlayer: MediaPlayer? = nil) {
+        guard let player = explicitPlayer ?? activeMediaPlayer else { return }
+        preferredMediaPlayer = player
+        if command == .playPause { players[player]?.isPlaying.toggle() }
+        player.send(command)
     }
 
-    private func observeSpotify() {
-        isSpotifyRunning = SpotifyRemote.isRunning
+    private func observeMediaPlayers() {
+        for player in MediaPlayer.allCases { players[player]?.isRunning = player.isRunning }
 
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
             let token = workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-                guard app?.bundleIdentifier == SpotifyRemote.bundleID else { return }
+                guard let bundleID = app?.bundleIdentifier,
+                      let player = MediaPlayer(rawValue: bundleID) else { return }
                 let launched = note.name == NSWorkspace.didLaunchApplicationNotification
                 MainActor.assumeIsolated {
-                    self?.isSpotifyRunning = launched
-                    if !launched {
-                        self?.isSpotifyPlaying = false
-                        self?.hasSpotifyState = false
-                    }
+                    self?.players[player] = PlayerState(isRunning: launched)
                 }
             }
             observers.append((workspace, token))
         }
 
         let distributed = DistributedNotificationCenter.default()
-        let token = distributed.addObserver(
-            forName: SpotifyRemote.stateNotification, object: nil, queue: .main
-        ) { [weak self] note in
-            guard let playing = SpotifyRemote.isPlaying(in: note) else { return }
-            MainActor.assumeIsolated {
-                self?.hasSpotifyState = true
-                self?.isSpotifyPlaying = playing
+        for player in MediaPlayer.allCases {
+            let token = distributed.addObserver(
+                forName: player.stateNotification, object: nil, queue: .main
+            ) { [weak self] note in
+                guard let playing = SpotifyRemote.isPlaying(in: note) else { return }
+                MainActor.assumeIsolated {
+                    self?.players[player]?.hasAnnounced = true
+                    self?.players[player]?.isPlaying = playing
+                    if playing {
+                        self?.preferredMediaPlayer = player
+                    }
+                }
             }
+            observers.append((distributed, token))
         }
-        observers.append((distributed, token))
     }
 
     // MARK: Per-app control
@@ -167,6 +198,18 @@ public final class MixerModel {
         update(setting, for: id)
     }
 
+    public func setOutputDevice(_ uid: String?, for id: String) {
+        var setting = setting(for: id)
+        let defaultUID = devices.first(where: \.isDefault)?.id
+        setting.outputDeviceUID = (uid == nil || uid == defaultUID) ? nil : uid
+        update(setting, for: id)
+    }
+
+    public func routedDeviceName(for id: String) -> String? {
+        guard let uid = setting(for: id).outputDeviceUID else { return nil }
+        return devices.first(where: { $0.id == uid })?.name ?? uid
+    }
+
     private func update(_ setting: AppSetting, for id: String) {
         guard setting != self.setting(for: id) else { return }
         settings[id] = setting.isDefault ? nil : setting
@@ -174,7 +217,26 @@ public final class MixerModel {
         scheduleSave()
     }
 
-    // MARK: Master volume
+    // MARK: Master volume & device switcher
+
+    public func selectOutputDevice(uid: String) {
+        engine?.selectOutputDevice(uid: uid)
+        if let target = devices.first(where: { $0.id == uid }) {
+            devices = devices.map { OutputDeviceInfo(id: $0.id, name: $0.name, isDefault: $0.id == uid) }
+            if let output {
+                self.output = OutputState(
+                    name: target.name,
+                    volume: output.volume,
+                    isMuted: output.isMuted,
+                    hasVolumeControl: output.hasVolumeControl
+                )
+            }
+        }
+    }
+
+    public func toggleLaunchAtLogin() {
+        launchAtLogin = LoginItem.setEnabled(!launchAtLogin)
+    }
 
     public func setMasterVolume(_ volume: Double) {
         masterVolume = min(max(volume, 0), 1)
@@ -218,6 +280,7 @@ public final class MixerModel {
     func panelDidAppear() {
         guard !isPanelVisible else { return }
         isPanelVisible = true
+        launchAtLogin = LoginItem.isEnabled
         if needsPermission { engine?.retryPermission() }
         engine?.setPanelVisible(true)
     }

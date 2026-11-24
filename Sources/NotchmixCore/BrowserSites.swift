@@ -20,6 +20,20 @@ public enum BrowserSites {
         "com.apple.SafariTechnologyPreview",
     ]
 
+    public static let chromiumBundleIDs: Set<String> = [
+        "com.google.Chrome",
+        "com.google.Chrome.canary",
+        "com.brave.Browser",
+        "company.thebrowser.Browser",
+        "com.microsoft.edgemac",
+        "com.vivaldi.Vivaldi",
+        "org.chromium.Chromium",
+        "com.operasoftware.Opera",
+        "com.operasoftware.OperaGX",
+    ]
+
+    public static let supportedBundleIDs: Set<String> = safariBundleIDs.union(chromiumBundleIDs)
+
     public struct Tab: Equatable, Sendable {
         public let pid: pid_t
         public let url: String
@@ -76,26 +90,51 @@ public enum BrowserSites {
 
     /// The short names of the sites playing audio in `bundleID`.
     public static func playingSites(in bundleID: String) -> Result {
-        let playing = playingWebContentPIDs()
-        guard !playing.isEmpty else { return .sites([]) }
+        let isChromium = chromiumBundleIDs.contains(bundleID)
+        let playing = isChromium ? [] : playingWebContentPIDs()
+        if !isChromium, playing.isEmpty { return .sites([]) }
 
         switch AppleEvents.permission(for: bundleID, askUser: true) {
         case .granted: break
         case .denied: return .notPermitted
         case .undetermined, .targetNotRunning: return .unavailable
         }
+        if isChromium {
+            guard let names = try? chromiumSiteNames(in: bundleID) else { return .unavailable }
+            return .sites(names)
+        }
         guard let tabs = try? tabs(of: bundleID) else { return .unavailable }
         return .sites(siteNames(of: tabs, playing: playing))
     }
 
-    static func siteNames(of tabs: [Tab], playing: Set<pid_t>) -> [String] {
+    static func chromiumSiteNames(in bundleID: String) throws -> [String] {
+        let everyWindow = AppleEvents.every("cwin", of: .null())
+        let activeTabs = AppleEvents.property("acTa", of: everyWindow)
+        let activeURLs = AppleEvents.leaves(
+            of: try AppleEvents.get(AppleEvents.property("URL ", of: activeTabs), from: bundleID, timeout: 3)
+        )
+        let names = uniqueNames(activeURLs.compactMap(\.stringValue))
+        if !names.isEmpty { return names }
+
+        let tabClass = bundleID.hasPrefix("com.operasoftware.") ? "OpTb" : "CrTb"
+        let everyTab = AppleEvents.every(tabClass, of: everyWindow)
+        let allURLs = AppleEvents.leaves(
+            of: try AppleEvents.get(AppleEvents.property("URL ", of: everyTab), from: bundleID, timeout: 3)
+        )
+        return uniqueNames(allURLs.compactMap(\.stringValue))
+    }
+
+    /// Short site names for `urls`, in order, without repeats.
+    private static func uniqueNames(_ urls: [String]) -> [String] {
         var names: [String] = []
-        for tab in tabs where playing.contains(tab.pid) {
-            if let name = SiteName.short(for: tab.url), !names.contains(name) {
-                names.append(name)
-            }
+        for url in urls {
+            if let name = SiteName.short(for: url), !names.contains(name) { names.append(name) }
         }
         return names
+    }
+
+    static func siteNames(of tabs: [Tab], playing: Set<pid_t>) -> [String] {
+        uniqueNames(tabs.filter { playing.contains($0.pid) }.map(\.url))
     }
 }
 

@@ -21,6 +21,7 @@ struct nm_tap_state {
     // Written by the audio thread, read by the control plane.
     _Atomic uint64_t callbacks;
     _Atomic uint64_t audible_frames;
+    _Atomic uint32_t peak_bits;
 
     // Audio thread only.
     float current_gain;
@@ -72,6 +73,7 @@ nm_tap_state *nm_tap_state_create(float initial_gain,
     atomic_init(&state->target_gain_bits, nm_float_bits(gain));
     atomic_init(&state->callbacks, 0);
     atomic_init(&state->audible_frames, 0);
+    atomic_init(&state->peak_bits, nm_float_bits(0.0f));
     state->current_gain = gain;
     state->ramp_target = gain;
     state->ramp_step = 0.0f;
@@ -109,6 +111,10 @@ uint64_t nm_tap_state_audible_frames(const nm_tap_state *state) {
     return atomic_load_explicit(&state->audible_frames, memory_order_relaxed);
 }
 
+float nm_tap_state_peak(const nm_tap_state *state) {
+    return nm_bits_float(atomic_load_explicit(&state->peak_bits, memory_order_relaxed));
+}
+
 /// Flattens buffers [first, count) into per-channel pointers and returns the
 /// channel count. `frames` is lowered to the shortest buffer seen.
 static uint32_t nm_collect_channels(const AudioBufferList *list,
@@ -121,7 +127,7 @@ static uint32_t nm_collect_channels(const AudioBufferList *list,
         uint32_t per_frame = buffer->mNumberChannels;
         // A NULL buffer is a stream the HAL was told this IOProc does not use.
         if (!buffer->mData || per_frame == 0) continue;
-        uint32_t buffer_frames = buffer->mDataByteSize / (per_frame * (uint32_t)sizeof(float));
+        uint32_t buffer_frames = buffer->mDataByteSize / ((uint64_t)per_frame * sizeof(float));
         if (buffer_frames < *frames) *frames = buffer_frames;
         for (uint32_t c = 0; c < per_frame && count < NM_MAX_CHANNELS; c++) {
             channels[count].base = (float *)buffer->mData + c;
@@ -144,7 +150,10 @@ void nm_tap_render(nm_tap_state *state,
         AudioBuffer *buffer = &output->mBuffers[b];
         if (buffer->mData) memset(buffer->mData, 0, buffer->mDataByteSize);
     }
-    if (!input || input->mNumberBuffers == 0) return;
+    if (!input || input->mNumberBuffers == 0) {
+        atomic_store_explicit(&state->peak_bits, nm_float_bits(0.0f), memory_order_relaxed);
+        return;
+    }
 
     nm_channel outs[NM_MAX_CHANNELS];
     nm_channel ins[NM_MAX_CHANNELS];
@@ -155,7 +164,10 @@ void nm_tap_render(nm_tap_state *state,
         ? input->mNumberBuffers - state->tap_buffer_count
         : 0;
     uint32_t in_count = nm_collect_channels(input, first_tap_buffer, ins, &frames);
-    if (out_count == 0 || in_count == 0 || frames == 0 || frames == UINT32_MAX) return;
+    if (out_count == 0 || in_count == 0 || frames == 0 || frames == UINT32_MAX) {
+        atomic_store_explicit(&state->peak_bits, nm_float_bits(0.0f), memory_order_relaxed);
+        return;
+    }
 
     // Decide which input channel feeds each output channel.
     uint32_t source[NM_MAX_CHANNELS];
@@ -194,6 +206,7 @@ void nm_tap_render(nm_tap_state *state,
     // "Audible" is measured before gain so a muted app still counts as alive.
     uint32_t probe_count = in_count < 2 ? in_count : 2;
     uint64_t audible = 0;
+    float peak = 0.0f;
 
     for (uint32_t f = 0; f < frames; f++) {
         if (state->ramp_remaining) {
@@ -204,7 +217,12 @@ void nm_tap_render(nm_tap_state *state,
 
         int heard = 0;
         for (uint32_t c = 0; c < probe_count; c++) {
-            if (ins[c].base[(size_t)f * ins[c].stride] != 0.0f) heard = 1;
+            float sample = ins[c].base[(size_t)f * ins[c].stride];
+            if (sample != 0.0f) {
+                heard = 1;
+                float mag = fabsf(sample);
+                if (mag > peak) peak = mag;
+            }
         }
         audible += (uint64_t)heard;
 
@@ -221,6 +239,8 @@ void nm_tap_render(nm_tap_state *state,
         }
     }
 
+    if (peak > 1.0f) peak = 1.0f;
+    atomic_store_explicit(&state->peak_bits, nm_float_bits(peak), memory_order_relaxed);
     if (audible) {
         atomic_fetch_add_explicit(&state->audible_frames, audible, memory_order_relaxed);
     }
